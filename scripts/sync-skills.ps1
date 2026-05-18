@@ -48,8 +48,9 @@
     .\scripts\sync-skills.ps1 -LatestTag -DryRun
 
 .PARAMETER Commit
-    Si present, apres la sync : git add skills/ + plugin.json, git commit avec
-    un message standard, puis git tag v<version> sur le commit cree.
+    Si present, apres la sync : git add skills/ + plugin.json + manifest.json,
+    git commit avec un message standard, puis git tag <version> sur le commit
+    cree (sans prefixe "v", aligne sur les tags d'amont).
 
 .EXAMPLE
     # Sync + commit + tag automatiques
@@ -320,8 +321,8 @@ try {
     [System.IO.File]::WriteAllText($manifestPath, $manifestJson, (New-Object System.Text.UTF8Encoding $false))
 
     $count = (Get-ChildItem -Path $skillsDir -Directory).Count
-    $tagName       = "v$upstreamVersion"
-    $commitMessage = "chore: sync skills $tagName from forcedotcom/sf-skills@$($upstreamSha.Substring(0,7))"
+    $tagName       = $upstreamVersion
+    $commitMessage = "chore: sync skills v$upstreamVersion from forcedotcom/sf-skills@$($upstreamSha.Substring(0,7))"
 
     Write-Host ""
     Write-Host "Sync terminee." -ForegroundColor Green

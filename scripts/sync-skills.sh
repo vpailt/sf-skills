@@ -194,8 +194,8 @@ if [[ -n "$py_bin" ]]; then
 fi
 
 count="$(find "$skills_dir" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
-tag_name="v${upstream_version}"
-commit_message="chore: sync skills ${tag_name} from forcedotcom/sf-skills@${upstream_sha:0:7}"
+tag_name="${upstream_version}"
+commit_message="chore: sync skills v${upstream_version} from forcedotcom/sf-skills@${upstream_sha:0:7}"
 
 echo
 echo "Sync terminee."
