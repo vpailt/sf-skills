@@ -7,14 +7,21 @@ Plugin [Claude Code](https://claude.com/claude-code) qui expose les **57 skills 
 ```
 sf-skills/
 ├── .claude-plugin/
-│   └── plugin.json         # manifeste du plugin
-├── skills/                 # skills vendores depuis forcedotcom/sf-skills/skills/
+│   └── plugin.json           # manifeste Claude Code
+├── skills/                   # skills vendorés depuis forcedotcom/sf-skills/skills/
+├── manifest.json             # manifeste Agent Skills (généré, voir plus bas)
 ├── scripts/
-│   ├── sync-skills.ps1     # script de sync (Windows)
-│   └── sync-skills.sh      # script de sync (Linux/macOS)
+│   ├── sync-skills.ps1       # script de sync (Windows)
+│   ├── sync-skills.sh        # script de sync (Linux/macOS)
+│   └── build-manifest.py     # générateur du manifest.json (appelé par sync-skills.sh)
 ├── README.md
 └── .gitignore
 ```
+
+### Deux manifestes, deux usages
+
+- **`.claude-plugin/plugin.json`** — manifeste Claude Code (le seul requis pour faire fonctionner le plugin). Voir [la doc Claude Code](https://code.claude.com/docs/en/plugins-reference#plugin-manifest-schema).
+- **`manifest.json`** — manifeste [Agent Skills](https://agentskills.io/) (format ouvert multi-outils). Il est **régénéré automatiquement** à chaque sync à partir du frontmatter de chaque `SKILL.md` (`name`, `description`) et de la liste des fichiers de chaque skill. Le manifest.json d'amont étant obsolète (paths catégorisés qui n'existent plus dans la structure actuelle), on en génère un cohérent avec ce qui est effectivement vendoré ici.
 
 ## Installation (côté utilisateur)
 

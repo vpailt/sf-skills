@@ -68,6 +68,88 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Get-SkillFrontmatter {
+    <# Lit le frontmatter YAML d'un SKILL.md et renvoie un hashtable
+       avec les cles trouvees (name, description, ...). Gere les
+       valeurs en double-quote, single-quote, et brutes.
+    #>
+    param([string]$Path)
+
+    $content = Get-Content -Path $Path -Raw -ErrorAction Stop
+    $result  = @{}
+
+    if ($content -notmatch '(?s)^---\s*\r?\n(.*?)\r?\n---') {
+        return $result
+    }
+    $frontmatter = $matches[1]
+
+    foreach ($line in ($frontmatter -split "`r?`n")) {
+        # On ignore les sous-cles indentees ; on ne lit que les cles racine
+        if ($line -match '^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*$') {
+            $key   = $matches[1]
+            $value = $matches[2]
+
+            if ($value.StartsWith('"') -and $value.EndsWith('"') -and $value.Length -ge 2) {
+                # Double-quote : on de-escape \" et \\
+                $value = $value.Substring(1, $value.Length - 2) -replace '\\"', '"' -replace '\\\\', '\'
+            }
+            elseif ($value.StartsWith("'") -and $value.EndsWith("'") -and $value.Length -ge 2) {
+                # Single-quote YAML : les ''  representent un '
+                $value = $value.Substring(1, $value.Length - 2) -replace "''", "'"
+            }
+
+            $result[$key] = $value
+        }
+    }
+
+    return $result
+}
+
+function Build-AgentSkillsManifest {
+    <# Construit un objet manifest.json conforme a la spec Agent Skills
+       a partir du contenu reel de skills/. Champs disponibles seulement :
+       name, path, folderPath, files, description.
+    #>
+    param(
+        [string]$SkillsDir,
+        [string]$Branch,
+        [string]$Sha
+    )
+
+    $skillEntries = @()
+    foreach ($skillDir in (Get-ChildItem -Path $SkillsDir -Directory | Sort-Object Name)) {
+        $skillFile = Join-Path $skillDir.FullName "SKILL.md"
+        if (-not (Test-Path $skillFile)) { continue }
+
+        $fm          = Get-SkillFrontmatter -Path $skillFile
+        $skillName   = if ($fm.ContainsKey('name'))        { $fm['name'] }        else { $skillDir.Name }
+        $description = if ($fm.ContainsKey('description')) { $fm['description'] } else { "" }
+
+        # Liste de fichiers relative au dossier du skill, separateurs /
+        $files = @()
+        foreach ($f in (Get-ChildItem -Path $skillDir.FullName -Recurse -File | Sort-Object FullName)) {
+            $rel = $f.FullName.Substring($skillDir.FullName.Length + 1) -replace '\\', '/'
+            $files += $rel
+        }
+
+        $skillEntries += [ordered]@{
+            name        = $skillName
+            path        = "skills/$($skillDir.Name)/SKILL.md"
+            folderPath  = "skills/$($skillDir.Name)"
+            files       = $files
+            description = $description
+        }
+    }
+
+    return [ordered]@{
+        version     = 1
+        generatedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+        branch      = $Branch
+        upstreamSha = $Sha
+        skills      = $skillEntries
+    }
+}
+
 function Get-UpstreamTags {
     param([string]$Url)
 
@@ -124,6 +206,7 @@ if ($LatestTag) {
 $repoRoot       = Split-Path -Parent $PSScriptRoot
 $skillsDir      = Join-Path $repoRoot "skills"
 $pluginJsonPath = Join-Path $repoRoot ".claude-plugin\plugin.json"
+$manifestPath   = Join-Path $repoRoot "manifest.json"
 $tempDir        = Join-Path ([System.IO.Path]::GetTempPath()) ("sf-skills-upstream-" + [System.Guid]::NewGuid().ToString("N"))
 
 Write-Host "Repo plugin       : $repoRoot"
@@ -229,6 +312,11 @@ try {
     # Conserve l'encodage UTF-8 sans BOM
     [System.IO.File]::WriteAllText($pluginJsonPath, $pluginContent, (New-Object System.Text.UTF8Encoding $false))
 
+    Write-Host "Generation de manifest.json (Agent Skills) depuis skills/..." -ForegroundColor Cyan
+    $manifest     = Build-AgentSkillsManifest -SkillsDir $skillsDir -Branch $UpstreamRef -Sha $upstreamSha
+    $manifestJson = $manifest | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($manifestPath, $manifestJson, (New-Object System.Text.UTF8Encoding $false))
+
     $count = (Get-ChildItem -Path $skillsDir -Directory).Count
     $tagName       = "v$upstreamVersion"
     $commitMessage = "chore: sync skills $tagName from forcedotcom/sf-skills@$($upstreamSha.Substring(0,7))"
@@ -253,7 +341,7 @@ try {
                 throw "Le tag '$tagName' existe deja. Supprime-le (git tag -d $tagName) ou choisis un autre ref."
             }
 
-            git add "skills/" ".claude-plugin/plugin.json"
+            git add "skills/" ".claude-plugin/plugin.json" "manifest.json"
             if ($LASTEXITCODE -ne 0) { throw "git add a echoue" }
 
             # Si rien n'a change, on ne commit pas mais on continue (le tag peut quand meme etre pose sur HEAD)
@@ -278,7 +366,7 @@ try {
     else {
         Write-Host ""
         Write-Host "Pense a committer + taguer :"
-        Write-Host "  git add skills/ .claude-plugin/plugin.json"
+        Write-Host "  git add skills/ .claude-plugin/plugin.json manifest.json"
         Write-Host "  git commit -m `"$commitMessage`""
         Write-Host "  git tag -a $tagName -m `"Sync from forcedotcom/sf-skills@$upstreamSha`""
         Write-Host ""

@@ -71,6 +71,7 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 skills_dir="$repo_root/skills"
 plugin_json="$repo_root/.claude-plugin/plugin.json"
+manifest_path="$repo_root/manifest.json"
 temp_dir="$(mktemp -d -t sf-skills-upstream-XXXXXX)"
 
 cleanup() { rm -rf "$temp_dir"; }
@@ -174,6 +175,24 @@ fi
 "${sed_inplace[@]}" "s/(\"version\"[[:space:]]*:[[:space:]]*\")[^\"]*(\")/\\1${escaped_version}\\2/" "$plugin_json"
 "${sed_inplace[@]}" "s/(\"description\"[[:space:]]*:[[:space:]]*\")([^\"\\\\]|\\\\.)*(\")/\\1${escaped_description}\\3/" "$plugin_json"
 
+echo "Generation de manifest.json (Agent Skills) depuis skills/..."
+if command -v python3 >/dev/null 2>&1; then
+  py_bin="python3"
+elif command -v python >/dev/null 2>&1; then
+  py_bin="python"
+else
+  echo "ATTENTION : python3 introuvable, manifest.json non genere." >&2
+  py_bin=""
+fi
+
+if [[ -n "$py_bin" ]]; then
+  SKILLS_DIR="$skills_dir" \
+  MANIFEST_PATH="$manifest_path" \
+  UPSTREAM_BRANCH="$UPSTREAM_REF" \
+  UPSTREAM_SHA="$upstream_sha" \
+  "$py_bin" "$repo_root/scripts/build-manifest.py"
+fi
+
 count="$(find "$skills_dir" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
 tag_name="v${upstream_version}"
 commit_message="chore: sync skills ${tag_name} from forcedotcom/sf-skills@${upstream_sha:0:7}"
@@ -195,7 +214,7 @@ if [[ "$COMMIT" -eq 1 ]]; then
     exit 1
   fi
 
-  git add "skills/" ".claude-plugin/plugin.json"
+  git add "skills/" ".claude-plugin/plugin.json" "manifest.json"
 
   if git diff --cached --name-only | grep -q .; then
     git commit -m "$commit_message"
@@ -212,7 +231,7 @@ if [[ "$COMMIT" -eq 1 ]]; then
 else
   echo
   echo "Pense a committer + taguer :"
-  echo "  git add skills/ .claude-plugin/plugin.json"
+  echo "  git add skills/ .claude-plugin/plugin.json manifest.json"
   echo "  git commit -m \"$commit_message\""
   echo "  git tag -a $tag_name -m \"Sync from forcedotcom/sf-skills@${upstream_sha}\""
   echo
