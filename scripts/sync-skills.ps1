@@ -113,7 +113,8 @@ function Build-AgentSkillsManifest {
     param(
         [string]$SkillsDir,
         [string]$Branch,
-        [string]$Sha
+        [string]$Sha,
+        [string]$Version
     )
 
     $skillEntries = @()
@@ -141,8 +142,9 @@ function Build-AgentSkillsManifest {
         }
     }
 
+    $manifestVersion = if ([string]::IsNullOrEmpty($Version)) { "0.0.0" } else { $Version }
     return [ordered]@{
-        version     = 1
+        version     = $manifestVersion
         generatedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
         branch      = $Branch
         upstreamSha = $Sha
@@ -313,7 +315,7 @@ try {
     [System.IO.File]::WriteAllText($pluginJsonPath, $pluginContent, (New-Object System.Text.UTF8Encoding $false))
 
     Write-Host "Generation de manifest.json (Agent Skills) depuis skills/..." -ForegroundColor Cyan
-    $manifest     = Build-AgentSkillsManifest -SkillsDir $skillsDir -Branch $UpstreamRef -Sha $upstreamSha
+    $manifest     = Build-AgentSkillsManifest -SkillsDir $skillsDir -Branch $UpstreamRef -Sha $upstreamSha -Version $upstreamVersion
     $manifestJson = $manifest | ConvertTo-Json -Depth 10
     [System.IO.File]::WriteAllText($manifestPath, $manifestJson, (New-Object System.Text.UTF8Encoding $false))
 

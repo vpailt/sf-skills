@@ -1,10 +1,11 @@
 """Genere un manifest.json (spec Agent Skills) depuis le contenu de skills/.
 
 Variables d'environnement :
-  SKILLS_DIR       chemin du dossier skills/
-  MANIFEST_PATH    chemin du fichier manifest.json en sortie
-  UPSTREAM_BRANCH  ref amont (main, 1.9.0, ...)
-  UPSTREAM_SHA     SHA exact du commit amont synchronise
+  SKILLS_DIR        chemin du dossier skills/
+  MANIFEST_PATH     chemin du fichier manifest.json en sortie
+  UPSTREAM_BRANCH   ref amont (main, 1.9.0, ...)
+  UPSTREAM_SHA      SHA exact du commit amont synchronise
+  UPSTREAM_VERSION  version semver du package.json amont (1.8.0, 1.9.0, ...)
 """
 
 import json
@@ -17,6 +18,7 @@ skills_dir = pathlib.Path(os.environ["SKILLS_DIR"])
 manifest_path = pathlib.Path(os.environ["MANIFEST_PATH"])
 branch = os.environ.get("UPSTREAM_BRANCH", "main")
 sha = os.environ.get("UPSTREAM_SHA", "")
+upstream_version = os.environ.get("UPSTREAM_VERSION", "")
 
 FRONT_RE = re.compile(r"\A---\s*\r?\n(.*?)\r?\n---", re.DOTALL)
 
@@ -61,7 +63,7 @@ for d in sorted(p for p in skills_dir.iterdir() if p.is_dir()):
 
 now = datetime.datetime.now(datetime.timezone.utc)
 manifest = {
-    "version": 1,
+    "version": upstream_version or "0.0.0",
     "generatedAt": now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z",
     "branch": branch,
     "upstreamSha": sha,
