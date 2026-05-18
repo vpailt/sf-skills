@@ -1,7 +1,7 @@
 {
   "$schema": "https://code.claude.com/plugin.schema.json",
   "name": "sf-skills",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Salesforce skills for Agentforce Vibes",
   "author": {
     "name": "Salesforce",
