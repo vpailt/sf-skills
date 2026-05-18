@@ -1,0 +1,190 @@
+<#
+.SYNOPSIS
+    Synchronise skills/ et le manifeste du plugin depuis forcedotcom/sf-skills.
+
+.DESCRIPTION
+    Clone forcedotcom/sf-skills dans un dossier temporaire (sur main, sur un
+    tag specifique, ou sur le dernier tag semver), remplace le contenu de
+    skills/ par celui du repo amont, met a jour version + description dans
+    .claude-plugin/plugin.json, et affiche le SHA importe.
+
+.PARAMETER UpstreamUrl
+    URL du repo amont. Par defaut : forcedotcom/sf-skills sur GitHub.
+
+.PARAMETER UpstreamRef
+    Branche ou tag a synchroniser. Par defaut : "main".
+
+.PARAMETER LatestTag
+    Si present, ignore -UpstreamRef et selectionne automatiquement le dernier
+    tag semver d'amont.
+
+.PARAMETER ListTags
+    Si present, affiche la liste des tags d'amont (tries du plus recent au plus
+    ancien) et quitte sans rien synchroniser.
+
+.EXAMPLE
+    # Sync depuis main (par defaut)
+    .\scripts\sync-skills.ps1
+
+.EXAMPLE
+    # Sync depuis le dernier tag semver
+    .\scripts\sync-skills.ps1 -LatestTag
+
+.EXAMPLE
+    # Sync depuis un tag precis
+    .\scripts\sync-skills.ps1 -UpstreamRef 1.9.0
+
+.EXAMPLE
+    # Lister les tags disponibles d'amont
+    .\scripts\sync-skills.ps1 -ListTags
+#>
+
+[CmdletBinding()]
+param(
+    [string]$UpstreamUrl = "https://github.com/forcedotcom/sf-skills.git",
+    [string]$UpstreamRef = "main",
+    [switch]$LatestTag,
+    [switch]$ListTags
+)
+
+$ErrorActionPreference = "Stop"
+
+function Get-UpstreamTags {
+    param([string]$Url)
+
+    $output = git ls-remote --tags --refs $Url 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $output) {
+        throw "Impossible de lister les tags depuis $Url"
+    }
+    $tags = @()
+    foreach ($line in $output) {
+        if ($line -match '^\s*([0-9a-f]+)\s+refs/tags/(.+)$') {
+            $tags += [pscustomobject]@{
+                Sha = $matches[1]
+                Tag = $matches[2]
+            }
+        }
+    }
+    # Tri semver decroissant ; les tags non-semver finissent en bas
+    return $tags | Sort-Object -Property @{
+        Expression = {
+            $clean = ($_.Tag -replace '^v', '')
+            try { [System.Management.Automation.SemanticVersion]::Parse($clean) }
+            catch { [System.Management.Automation.SemanticVersion]::new(0, 0, 0) }
+        }
+        Descending = $true
+    }
+}
+
+# ---- Mode 1 : lister les tags et sortir ----
+if ($ListTags) {
+    Write-Host "Tags disponibles sur $UpstreamUrl (recents en premier) :" -ForegroundColor Cyan
+    $tags = Get-UpstreamTags -Url $UpstreamUrl
+    if (-not $tags) {
+        Write-Host "  (aucun tag trouve)" -ForegroundColor Yellow
+        return
+    }
+    foreach ($t in $tags) {
+        "{0,-15} {1}" -f $t.Tag, $t.Sha
+    }
+    return
+}
+
+# ---- Mode 2 : auto-selection du dernier tag ----
+if ($LatestTag) {
+    $tags = Get-UpstreamTags -Url $UpstreamUrl
+    if (-not $tags) { throw "Aucun tag trouve sur $UpstreamUrl" }
+    $UpstreamRef = $tags[0].Tag
+    Write-Host "Dernier tag detecte : $UpstreamRef" -ForegroundColor Cyan
+}
+
+$repoRoot       = Split-Path -Parent $PSScriptRoot
+$skillsDir      = Join-Path $repoRoot "skills"
+$pluginJsonPath = Join-Path $repoRoot ".claude-plugin\plugin.json"
+$tempDir        = Join-Path ([System.IO.Path]::GetTempPath()) ("sf-skills-upstream-" + [System.Guid]::NewGuid().ToString("N"))
+
+Write-Host "Repo plugin       : $repoRoot"
+Write-Host "Source amont      : $UpstreamUrl ($UpstreamRef)"
+Write-Host "Clone temporaire  : $tempDir"
+Write-Host ""
+
+try {
+    Write-Host "Clonage de $UpstreamUrl..." -ForegroundColor Cyan
+    git clone --depth 1 --branch $UpstreamRef $UpstreamUrl $tempDir
+    if ($LASTEXITCODE -ne 0) { throw "git clone a echoue (code $LASTEXITCODE)" }
+
+    $upstreamSkills      = Join-Path $tempDir "skills"
+    $upstreamPackageJson = Join-Path $tempDir "package.json"
+    if (-not (Test-Path $upstreamSkills))      { throw "skills/ introuvable dans le clone amont" }
+    if (-not (Test-Path $upstreamPackageJson)) { throw "package.json introuvable dans le clone amont" }
+
+    $upstreamPackage     = Get-Content $upstreamPackageJson -Raw | ConvertFrom-Json
+    $upstreamVersion     = $upstreamPackage.version
+    $upstreamDescription = $upstreamPackage.description
+    if ([string]::IsNullOrWhiteSpace($upstreamVersion))     { throw "Version introuvable dans le package.json amont" }
+    if ([string]::IsNullOrWhiteSpace($upstreamDescription)) { throw "Description introuvable dans le package.json amont" }
+    Write-Host "Version amont     : $upstreamVersion" -ForegroundColor Cyan
+    Write-Host "Description amont : $upstreamDescription" -ForegroundColor Cyan
+
+    Write-Host "Suppression de l'ancien contenu de skills/..." -ForegroundColor Cyan
+    if (Test-Path $skillsDir) {
+        Get-ChildItem -Path $skillsDir -Force | Remove-Item -Recurse -Force
+    } else {
+        New-Item -ItemType Directory -Path $skillsDir | Out-Null
+    }
+
+    Write-Host "Copie de upstream/skills/ vers skills/..." -ForegroundColor Cyan
+    Copy-Item -Path (Join-Path $upstreamSkills "*") -Destination $skillsDir -Recurse -Force
+
+    Write-Host "Mise a jour de version et description dans plugin.json..." -ForegroundColor Cyan
+    if (-not (Test-Path $pluginJsonPath)) { throw "plugin.json introuvable : $pluginJsonPath" }
+    $pluginContent = Get-Content $pluginJsonPath -Raw
+
+    $versionPattern     = '("version"\s*:\s*")[^"]*(")'
+    $descriptionPattern = '("description"\s*:\s*")(?:[^"\\]|\\.)*(")'
+
+    if ($pluginContent -notmatch $versionPattern) {
+        throw "Champ `"version`" introuvable dans plugin.json - ajoute-le manuellement avant de relancer le script"
+    }
+    if ($pluginContent -notmatch $descriptionPattern) {
+        throw "Champ `"description`" introuvable dans plugin.json - ajoute-le manuellement avant de relancer le script"
+    }
+
+    # Echappe pour replacement regex (le replacement traite '$' specialement)
+    $escapedDescription = $upstreamDescription -replace '\\', '\\\\' -replace '"', '\"'
+    $escapedDescriptionForRegex = $escapedDescription -replace '\$', '$$$$'
+
+    $pluginContent = [System.Text.RegularExpressions.Regex]::Replace(
+        $pluginContent, $versionPattern,
+        ('${1}' + $upstreamVersion + '${2}')
+    )
+    $pluginContent = [System.Text.RegularExpressions.Regex]::Replace(
+        $pluginContent, $descriptionPattern,
+        ('${1}' + $escapedDescriptionForRegex + '${2}')
+    )
+    # Conserve l'encodage UTF-8 sans BOM
+    [System.IO.File]::WriteAllText($pluginJsonPath, $pluginContent, (New-Object System.Text.UTF8Encoding $false))
+
+    Push-Location $tempDir
+    $upstreamSha = (git rev-parse HEAD).Trim()
+    Pop-Location
+
+    $count = (Get-ChildItem -Path $skillsDir -Directory).Count
+    Write-Host ""
+    Write-Host "Sync terminee." -ForegroundColor Green
+    Write-Host "  Ref amont           : $UpstreamRef"
+    Write-Host "  SHA amont importe   : $upstreamSha"
+    Write-Host "  Skills synchronises : $count"
+    Write-Host "  Version plugin.json : $upstreamVersion"
+    Write-Host "  Description         : $upstreamDescription"
+    Write-Host ""
+    Write-Host "Pense a committer les changements :"
+    Write-Host "  git add skills/ .claude-plugin/plugin.json"
+    Write-Host "  git commit -m `"chore: sync skills v$upstreamVersion from forcedotcom/sf-skills@$($upstreamSha.Substring(0,7))`""
+}
+finally {
+    if (Test-Path $tempDir) {
+        Write-Host "Nettoyage du clone temporaire..." -ForegroundColor DarkGray
+        Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}

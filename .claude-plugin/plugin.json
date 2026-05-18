@@ -1,0 +1,24 @@
+{
+  "$schema": "https://code.claude.com/plugin.schema.json",
+  "name": "sf-skills",
+  "version": "1.9.0",
+  "description": "Salesforce skills for Agentforce Vibes",
+  "author": {
+    "name": "Salesforce",
+    "url": "https://github.com/forcedotcom/sf-skills"
+  },
+  "homepage": "https://github.com/vpailt/sf-skills",
+  "repository": "https://github.com/vpailt/sf-skills",
+  "license": "CC-BY-NC-4.0",
+  "keywords": [
+    "salesforce",
+    "agentforce",
+    "apex",
+    "flow",
+    "lwc",
+    "soql",
+    "data-cloud",
+    "omnistudio",
+    "sfdx"
+  ]
+}
