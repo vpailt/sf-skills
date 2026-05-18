@@ -22,6 +22,10 @@
     Si present, affiche la liste des tags d'amont (tries du plus recent au plus
     ancien) et quitte sans rien synchroniser.
 
+.PARAMETER DryRun
+    Si present, clone l'amont et affiche ce qui changerait, mais ne modifie
+    NI skills/ NI plugin.json. Utile pour valider la sync avant de l'appliquer.
+
 .EXAMPLE
     # Sync depuis main (par defaut)
     .\scripts\sync-skills.ps1
@@ -37,6 +41,11 @@
 .EXAMPLE
     # Lister les tags disponibles d'amont
     .\scripts\sync-skills.ps1 -ListTags
+
+.EXAMPLE
+    # Simulation : voir ce qui changerait sans rien modifier
+    .\scripts\sync-skills.ps1 -DryRun
+    .\scripts\sync-skills.ps1 -LatestTag -DryRun
 #>
 
 [CmdletBinding()]
@@ -44,7 +53,8 @@ param(
     [string]$UpstreamUrl = "https://github.com/forcedotcom/sf-skills.git",
     [string]$UpstreamRef = "main",
     [switch]$LatestTag,
-    [switch]$ListTags
+    [switch]$ListTags,
+    [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
@@ -65,12 +75,16 @@ function Get-UpstreamTags {
             }
         }
     }
-    # Tri semver decroissant ; les tags non-semver finissent en bas
+    # Tri semver decroissant via [System.Version] (compatible PS 5.1).
+    # Les tags non parsables finissent en bas (version 0.0).
     return $tags | Sort-Object -Property @{
         Expression = {
             $clean = ($_.Tag -replace '^v', '')
-            try { [System.Management.Automation.SemanticVersion]::Parse($clean) }
-            catch { [System.Management.Automation.SemanticVersion]::new(0, 0, 0) }
+            # [version] exige au moins X.Y et n'accepte pas les suffixes "-alpha".
+            # On retombe sur 0.0 si parsing impossible.
+            $parsed = $null
+            if ([System.Version]::TryParse($clean, [ref]$parsed)) { $parsed }
+            else { [System.Version]'0.0' }
         }
         Descending = $true
     }
@@ -106,6 +120,9 @@ $tempDir        = Join-Path ([System.IO.Path]::GetTempPath()) ("sf-skills-upstre
 Write-Host "Repo plugin       : $repoRoot"
 Write-Host "Source amont      : $UpstreamUrl ($UpstreamRef)"
 Write-Host "Clone temporaire  : $tempDir"
+if ($DryRun) {
+    Write-Host "Mode              : DRY-RUN (aucune modification ne sera appliquee)" -ForegroundColor Yellow
+}
 Write-Host ""
 
 try {
@@ -126,17 +143,7 @@ try {
     Write-Host "Version amont     : $upstreamVersion" -ForegroundColor Cyan
     Write-Host "Description amont : $upstreamDescription" -ForegroundColor Cyan
 
-    Write-Host "Suppression de l'ancien contenu de skills/..." -ForegroundColor Cyan
-    if (Test-Path $skillsDir) {
-        Get-ChildItem -Path $skillsDir -Force | Remove-Item -Recurse -Force
-    } else {
-        New-Item -ItemType Directory -Path $skillsDir | Out-Null
-    }
-
-    Write-Host "Copie de upstream/skills/ vers skills/..." -ForegroundColor Cyan
-    Copy-Item -Path (Join-Path $upstreamSkills "*") -Destination $skillsDir -Recurse -Force
-
-    Write-Host "Mise a jour de version et description dans plugin.json..." -ForegroundColor Cyan
+    # ---- Lit l'etat local courant (pour diff et dry-run) ----
     if (-not (Test-Path $pluginJsonPath)) { throw "plugin.json introuvable : $pluginJsonPath" }
     $pluginContent = Get-Content $pluginJsonPath -Raw
 
@@ -150,6 +157,54 @@ try {
         throw "Champ `"description`" introuvable dans plugin.json - ajoute-le manuellement avant de relancer le script"
     }
 
+    $currentPackage = Get-Content $pluginJsonPath -Raw | ConvertFrom-Json
+    $currentVersion     = $currentPackage.version
+    $currentDescription = $currentPackage.description
+
+    $localSkills    = if (Test-Path $skillsDir) {
+        @(Get-ChildItem -Path $skillsDir -Directory | Select-Object -ExpandProperty Name)
+    } else { @() }
+    $upstreamSkillsList = @(Get-ChildItem -Path $upstreamSkills -Directory | Select-Object -ExpandProperty Name)
+
+    $added   = @($upstreamSkillsList | Where-Object { $_ -notin $localSkills })
+    $removed = @($localSkills        | Where-Object { $_ -notin $upstreamSkillsList })
+
+    Push-Location $tempDir
+    $upstreamSha = (git rev-parse HEAD).Trim()
+    Pop-Location
+
+    # ---- Diff resume ----
+    Write-Host ""
+    Write-Host "Changements detectes :" -ForegroundColor Cyan
+    Write-Host ("  Ref amont           : {0} ({1})" -f $UpstreamRef, $upstreamSha.Substring(0,7))
+    Write-Host ("  version             : {0} -> {1}" -f $currentVersion,     $upstreamVersion)
+    Write-Host ("  description         : {0} -> {1}" -f $currentDescription, $upstreamDescription)
+    Write-Host ("  skills (local|amont): {0} | {1}" -f $localSkills.Count, $upstreamSkillsList.Count)
+    if ($added)   { Write-Host ("  + ajoutes  ({0}) : {1}" -f $added.Count,   ($added   -join ', ')) -ForegroundColor Green }
+    if ($removed) { Write-Host ("  - retires  ({0}) : {1}" -f $removed.Count, ($removed -join ', ')) -ForegroundColor Yellow }
+    if (-not $added -and -not $removed) {
+        Write-Host "  (aucun skill ajoute ou retire ; le contenu individuel peut neanmoins differer)"
+    }
+    Write-Host ""
+
+    if ($DryRun) {
+        Write-Host "DRY-RUN : aucune modification appliquee." -ForegroundColor Yellow
+        Write-Host "Pour appliquer, relance sans -DryRun."
+        return
+    }
+
+    # ---- Application reelle ----
+    Write-Host "Suppression de l'ancien contenu de skills/..." -ForegroundColor Cyan
+    if (Test-Path $skillsDir) {
+        Get-ChildItem -Path $skillsDir -Force | Remove-Item -Recurse -Force
+    } else {
+        New-Item -ItemType Directory -Path $skillsDir | Out-Null
+    }
+
+    Write-Host "Copie de upstream/skills/ vers skills/..." -ForegroundColor Cyan
+    Copy-Item -Path (Join-Path $upstreamSkills "*") -Destination $skillsDir -Recurse -Force
+
+    Write-Host "Mise a jour de version et description dans plugin.json..." -ForegroundColor Cyan
     # Echappe pour replacement regex (le replacement traite '$' specialement)
     $escapedDescription = $upstreamDescription -replace '\\', '\\\\' -replace '"', '\"'
     $escapedDescriptionForRegex = $escapedDescription -replace '\$', '$$$$'
@@ -165,18 +220,10 @@ try {
     # Conserve l'encodage UTF-8 sans BOM
     [System.IO.File]::WriteAllText($pluginJsonPath, $pluginContent, (New-Object System.Text.UTF8Encoding $false))
 
-    Push-Location $tempDir
-    $upstreamSha = (git rev-parse HEAD).Trim()
-    Pop-Location
-
     $count = (Get-ChildItem -Path $skillsDir -Directory).Count
     Write-Host ""
     Write-Host "Sync terminee." -ForegroundColor Green
-    Write-Host "  Ref amont           : $UpstreamRef"
-    Write-Host "  SHA amont importe   : $upstreamSha"
     Write-Host "  Skills synchronises : $count"
-    Write-Host "  Version plugin.json : $upstreamVersion"
-    Write-Host "  Description         : $upstreamDescription"
     Write-Host ""
     Write-Host "Pense a committer les changements :"
     Write-Host "  git add skills/ .claude-plugin/plugin.json"

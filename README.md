@@ -59,6 +59,10 @@ Les skills sont **vendorés** dans ce repo (copiés depuis `forcedotcom/sf-skill
 
 # Lister les tags disponibles d'amont
 .\scripts\sync-skills.ps1 -ListTags
+
+# Simulation : voir ce qui changerait sans rien modifier
+.\scripts\sync-skills.ps1 -DryRun
+.\scripts\sync-skills.ps1 -LatestTag -DryRun
 ```
 
 ### Linux / macOS (bash)
@@ -75,6 +79,10 @@ Les skills sont **vendorés** dans ce repo (copiés depuis `forcedotcom/sf-skill
 
 # Lister les tags disponibles d'amont
 ./scripts/sync-skills.sh --list-tags
+
+# Simulation : voir ce qui changerait sans rien modifier
+./scripts/sync-skills.sh --dry-run
+./scripts/sync-skills.sh --latest-tag --dry-run
 ```
 
 ## Attribution & licence
