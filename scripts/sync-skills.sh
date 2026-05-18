@@ -7,6 +7,7 @@
 #   ./scripts/sync-skills.sh --ref 1.9.0     # sync depuis un tag/branche precis
 #   ./scripts/sync-skills.sh --list-tags     # liste les tags d'amont et quitte
 #   ./scripts/sync-skills.sh --dry-run       # simule sans rien modifier
+#   ./scripts/sync-skills.sh --commit        # apres sync : git add + commit + tag
 #   ./scripts/sync-skills.sh --url <git-url> # override URL amont
 #
 # Tout argument positionnel restant sera traite comme l'URL amont (pour
@@ -19,6 +20,7 @@ UPSTREAM_REF="main"
 LIST_TAGS=0
 LATEST_TAG=0
 DRY_RUN=0
+COMMIT=0
 
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
@@ -26,10 +28,11 @@ while [[ $# -gt 0 ]]; do
     --list-tags)   LIST_TAGS=1; shift ;;
     --latest-tag)  LATEST_TAG=1; shift ;;
     --dry-run)     DRY_RUN=1; shift ;;
+    --commit)      COMMIT=1; shift ;;
     --ref)         UPSTREAM_REF="$2"; shift 2 ;;
     --url)         UPSTREAM_URL="$2"; shift 2 ;;
     -h|--help)
-      sed -n '2,14p' "$0"
+      sed -n '2,15p' "$0"
       exit 0
       ;;
     --)            shift; POSITIONAL+=("$@"); break ;;
@@ -172,11 +175,46 @@ fi
 "${sed_inplace[@]}" "s/(\"description\"[[:space:]]*:[[:space:]]*\")([^\"\\\\]|\\\\.)*(\")/\\1${escaped_description}\\3/" "$plugin_json"
 
 count="$(find "$skills_dir" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+tag_name="v${upstream_version}"
+commit_message="chore: sync skills ${tag_name} from forcedotcom/sf-skills@${upstream_sha:0:7}"
 
 echo
 echo "Sync terminee."
 echo "  Skills synchronises : $count"
-echo
-echo "Pense a committer les changements :"
-echo "  git add skills/ .claude-plugin/plugin.json"
-echo "  git commit -m \"chore: sync skills v${upstream_version} from forcedotcom/sf-skills@${upstream_sha:0:7}\""
+
+if [[ "$COMMIT" -eq 1 ]]; then
+  echo
+  echo "Commit + tag automatiques..."
+  cd "$repo_root"
+
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || { echo "ERREUR : pas dans un repo git : $repo_root" >&2; exit 1; }
+
+  if git tag --list "$tag_name" | grep -q .; then
+    echo "ERREUR : le tag '$tag_name' existe deja. Supprime-le (git tag -d $tag_name) ou choisis un autre ref." >&2
+    exit 1
+  fi
+
+  git add "skills/" ".claude-plugin/plugin.json"
+
+  if git diff --cached --name-only | grep -q .; then
+    git commit -m "$commit_message"
+    echo "  Commit cree : $commit_message"
+  else
+    echo "  Aucun changement a commiter (HEAD est deja synchro)."
+  fi
+
+  git tag -a "$tag_name" -m "Sync from forcedotcom/sf-skills@${upstream_sha}"
+  echo "  Tag cree    : $tag_name"
+
+  echo
+  echo "Pour publier : git push --follow-tags origin main"
+else
+  echo
+  echo "Pense a committer + taguer :"
+  echo "  git add skills/ .claude-plugin/plugin.json"
+  echo "  git commit -m \"$commit_message\""
+  echo "  git tag -a $tag_name -m \"Sync from forcedotcom/sf-skills@${upstream_sha}\""
+  echo
+  echo "Ou relance le script avec --commit pour tout faire d'un coup."
+fi

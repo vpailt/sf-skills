@@ -63,6 +63,9 @@ Les skills sont **vendorés** dans ce repo (copiés depuis `forcedotcom/sf-skill
 # Simulation : voir ce qui changerait sans rien modifier
 .\scripts\sync-skills.ps1 -DryRun
 .\scripts\sync-skills.ps1 -LatestTag -DryRun
+
+# Sync + git add + commit + tag v<version> en une commande
+.\scripts\sync-skills.ps1 -LatestTag -Commit
 ```
 
 ### Linux / macOS (bash)
@@ -83,6 +86,9 @@ Les skills sont **vendorés** dans ce repo (copiés depuis `forcedotcom/sf-skill
 # Simulation : voir ce qui changerait sans rien modifier
 ./scripts/sync-skills.sh --dry-run
 ./scripts/sync-skills.sh --latest-tag --dry-run
+
+# Sync + git add + commit + tag v<version> en une commande
+./scripts/sync-skills.sh --latest-tag --commit
 ```
 
 ## Attribution & licence

@@ -46,6 +46,14 @@
     # Simulation : voir ce qui changerait sans rien modifier
     .\scripts\sync-skills.ps1 -DryRun
     .\scripts\sync-skills.ps1 -LatestTag -DryRun
+
+.PARAMETER Commit
+    Si present, apres la sync : git add skills/ + plugin.json, git commit avec
+    un message standard, puis git tag v<version> sur le commit cree.
+
+.EXAMPLE
+    # Sync + commit + tag automatiques
+    .\scripts\sync-skills.ps1 -LatestTag -Commit
 #>
 
 [CmdletBinding()]
@@ -54,7 +62,8 @@ param(
     [string]$UpstreamRef = "main",
     [switch]$LatestTag,
     [switch]$ListTags,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$Commit
 )
 
 $ErrorActionPreference = "Stop"
@@ -221,13 +230,60 @@ try {
     [System.IO.File]::WriteAllText($pluginJsonPath, $pluginContent, (New-Object System.Text.UTF8Encoding $false))
 
     $count = (Get-ChildItem -Path $skillsDir -Directory).Count
+    $tagName       = "v$upstreamVersion"
+    $commitMessage = "chore: sync skills $tagName from forcedotcom/sf-skills@$($upstreamSha.Substring(0,7))"
+
     Write-Host ""
     Write-Host "Sync terminee." -ForegroundColor Green
     Write-Host "  Skills synchronises : $count"
-    Write-Host ""
-    Write-Host "Pense a committer les changements :"
-    Write-Host "  git add skills/ .claude-plugin/plugin.json"
-    Write-Host "  git commit -m `"chore: sync skills v$upstreamVersion from forcedotcom/sf-skills@$($upstreamSha.Substring(0,7))`""
+
+    if ($Commit) {
+        Write-Host ""
+        Write-Host "Commit + tag automatiques..." -ForegroundColor Cyan
+
+        # Verifie qu'on est bien dans un repo git
+        Push-Location $repoRoot
+        try {
+            git rev-parse --is-inside-work-tree | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Pas dans un repo git : $repoRoot" }
+
+            # Refuse de re-taguer si le tag existe deja
+            $existingTag = git tag --list $tagName
+            if ($existingTag) {
+                throw "Le tag '$tagName' existe deja. Supprime-le (git tag -d $tagName) ou choisis un autre ref."
+            }
+
+            git add "skills/" ".claude-plugin/plugin.json"
+            if ($LASTEXITCODE -ne 0) { throw "git add a echoue" }
+
+            # Si rien n'a change, on ne commit pas mais on continue (le tag peut quand meme etre pose sur HEAD)
+            $staged = git diff --cached --name-only
+            if ($staged) {
+                git commit -m $commitMessage
+                if ($LASTEXITCODE -ne 0) { throw "git commit a echoue" }
+                Write-Host "  Commit cree : $commitMessage" -ForegroundColor Green
+            } else {
+                Write-Host "  Aucun changement a commiter (HEAD est deja synchro)." -ForegroundColor Yellow
+            }
+
+            git tag -a $tagName -m "Sync from forcedotcom/sf-skills@$upstreamSha"
+            if ($LASTEXITCODE -ne 0) { throw "git tag a echoue" }
+            Write-Host "  Tag cree    : $tagName" -ForegroundColor Green
+
+            Write-Host ""
+            Write-Host "Pour publier : git push --follow-tags origin main"
+        }
+        finally { Pop-Location }
+    }
+    else {
+        Write-Host ""
+        Write-Host "Pense a committer + taguer :"
+        Write-Host "  git add skills/ .claude-plugin/plugin.json"
+        Write-Host "  git commit -m `"$commitMessage`""
+        Write-Host "  git tag -a $tagName -m `"Sync from forcedotcom/sf-skills@$upstreamSha`""
+        Write-Host ""
+        Write-Host "Ou relance le script avec -Commit pour tout faire d'un coup."
+    }
 }
 finally {
     if (Test-Path $tempDir) {
